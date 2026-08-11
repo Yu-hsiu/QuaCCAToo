@@ -3,13 +3,14 @@ This module contains the PulsedSim class that is used to define a general pulsed
 sequence of pulses and free evolution operations, part of the QuaCAAToo package.
 """
 
+import multiprocessing
 import warnings
 from collections.abc import Callable
 from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
-from qutip import Qobj, measurement, mesolve, parallel_map
+from qutip import Qobj, measurement, mesolve, parallel_map, serial_map
 
 from ..qsys.qsys import QSys
 from ..utils import _check_figsize
@@ -489,7 +490,10 @@ class PulsedSim:
         sequence_kwargs : dict
             Dictionary of arguments to be passed to the sequence function
         map_kw : dict
-            Dictionary of options for the parallel_map function from QuTip
+            Dictionary of options for QuTip's map functions. The sequence is mapped serially by
+            default, which keeps the results identical on every platform. Passing a num_cpus
+            larger than one switches to parallel_map, which is only safe when the whole quantum
+            system is defined at module level, see the note in the method body.
         """
         # if no sequence is passed but the PulsedSim has one, uses the attribute sequence
         if sequence is None and self.sequence is not None:
@@ -513,7 +517,7 @@ class PulsedSim:
 
         # check if map_kw and sequence_kwargs are None or dictionaries
         if map_kw is None:
-            map_kw = {"num_cpus": None}
+            map_kw = {}
         elif not isinstance(map_kw, dict):
             raise ValueError(
                 "map_kw must be a dictionary of options for the parallel_map function from QuTip"
@@ -536,11 +540,40 @@ class PulsedSim:
         # previous simulation
         self.rho = self.system.rho0.copy()
 
-        # run the experiment by calling the parallel_map function from QuTip over the variable
-        # attribute
-        self.rho = parallel_map(
-            self.sequence, self.variable, task_kwargs=sequence_kwargs, map_kw=map_kw
-        )
+        # Run the experiment by mapping the sequence over the variable attribute.
+        #
+        # QuTip's parallel_map hands each task to a worker process. Those workers only share the
+        # state of the parent when the platform starts them with fork: with spawn (Windows and
+        # macOS by default) every worker re-imports the module that defines the sequence, so any
+        # attribute assigned at runtime - rho0, observable, H2, c_ops - is missing there. The
+        # simulation then silently runs a different physical system instead of raising, which is
+        # why identical scripts reproduced the published results on Linux only.
+        # Therefore the mapping is serial unless more than one CPU is explicitly requested.
+        num_cpus = map_kw.get("num_cpus")
+
+        if num_cpus is not None and num_cpus > 1:
+            if multiprocessing.get_start_method(allow_none=False) != "fork":
+                warnings.warn(
+                    "Parallel execution was requested on a platform that starts processes with "
+                    f"'{multiprocessing.get_start_method(allow_none=False)}' instead of 'fork'. "
+                    "The worker processes re-import the module defining the sequence, so every "
+                    "attribute of the quantum system set after the import (rho0, observable, H2, "
+                    "c_ops) is not visible to them and the results will not correspond to the "
+                    "intended system. Define the complete system at module level, or drop "
+                    "num_cpus from map_kw to run serially.",
+                    stacklevel=2,
+                )
+            self.rho = parallel_map(
+                self.sequence, self.variable, task_kwargs=sequence_kwargs, map_kw=map_kw
+            )
+        else:
+            # serial_map does not take num_cpus
+            self.rho = serial_map(
+                self.sequence,
+                self.variable,
+                task_kwargs=sequence_kwargs,
+                map_kw={key: value for key, value in map_kw.items() if key != "num_cpus"},
+            )
 
         self._get_results()
 
@@ -871,8 +904,8 @@ class PulsedSim:
         reset at the beginning of each sequence. Otherwise consecutive calls of the same sequence
         would evolve the state of the previous call and start the pulses at a shifted time, which
         changes their phase.
-        Through the run method this is masked by QuTip's parallel_map, which hands a fresh copy of
-        the object to each task, but it also matters after plot_pulses, which advances total_time.
+        This applies to the serial mapping used by the run method, to consecutive calls of a
+        sequence and to calls after plot_pulses, which advances total_time.
         """
         self.rho = self.system.rho0.copy()
         self.total_time = 0
