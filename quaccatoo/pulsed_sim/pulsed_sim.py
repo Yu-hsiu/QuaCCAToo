@@ -13,7 +13,7 @@ import numpy as np
 from qutip import Qobj, measurement, mesolve, parallel_map, serial_map
 
 from ..qsys.qsys import QSys
-from ..utils import _check_figsize
+from ..utils import _check_figsize, _usable_cpus
 from .pulse_shapes import square_pulse
 
 __all__ = ["PulsedSim"]
@@ -550,6 +550,21 @@ class PulsedSim:
         # why identical scripts reproduced the published results on Linux only.
         # Therefore the mapping is serial unless more than one CPU is explicitly requested.
         num_cpus = map_kw.get("num_cpus")
+
+        # A num_cpus larger than the number of cores the process may use only adds workers that
+        # compete for the same cores. On hosted runtimes such as Google Colab the machine
+        # advertises more cores than the container may schedule on, so a script written for a
+        # workstation (num_cpus = 32) spawns dozens of processes on two usable cores.
+        if num_cpus is not None and num_cpus > 1:
+            usable_cpus = _usable_cpus()
+            if num_cpus > usable_cpus:
+                warnings.warn(
+                    f"num_cpus={num_cpus} was requested but only {usable_cpus} cores are usable "
+                    "by this process, so the number of workers is reduced accordingly.",
+                    stacklevel=2,
+                )
+                num_cpus = usable_cpus
+                map_kw = {**map_kw, "num_cpus": num_cpus}
 
         if num_cpus is not None and num_cpus > 1:
             if multiprocessing.get_start_method(allow_none=False) != "fork":

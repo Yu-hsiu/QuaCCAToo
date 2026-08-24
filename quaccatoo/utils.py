@@ -40,6 +40,24 @@ def _check_figsize(figsize) -> None:
         raise ValueError(f"figsize must be a tuple of two positive floats, got {figsize}.")
 
 
+def _usable_cpus() -> int:
+    """
+    Return the number of cores the current process is actually allowed to run on.
+
+    os.cpu_count reports the cores of the machine, which on containerized runtimes is larger
+    than the quota given to the container. sched_getaffinity reflects the quota and exists on
+    Linux only, so it is used when available.
+
+    Returns
+    -------
+    int
+        Number of usable cores, at least one.
+    """
+    if hasattr(os, "sched_getaffinity"):
+        return max(1, len(os.sched_getaffinity(0)))
+    return max(1, os.cpu_count() or 1)
+
+
 def save_quaccatoo(obj_save, file_path):
     """
     Look for all the attributes of the obj, save Qobj attributes to separate files,
