@@ -13,7 +13,7 @@ import numpy as np
 from qutip import Qobj, measurement, mesolve, parallel_map, serial_map
 
 from ..qsys.qsys import QSys
-from ..utils import _check_figsize, _usable_cpus
+from ..utils import _check_figsize, _usable_cpus, _warn_extreme_tolerances
 from .pulse_shapes import square_pulse
 
 __all__ = ["PulsedSim"]
@@ -793,6 +793,7 @@ class PulsedSim:
         if options is None:
             self.options = {}
         elif isinstance(options, dict):
+            _warn_extreme_tolerances(options)
             self.options = options
         else:
             raise ValueError("options must be a dictionary of dynamic solver options from Qutip")

@@ -6,6 +6,7 @@ It also contains small internal helpers shared by the plotting methods of the ot
 
 import os
 import shutil
+import warnings
 import zipfile
 
 import dill
@@ -38,6 +39,41 @@ def _check_figsize(figsize) -> None:
         or not all(isinstance(dim, (int, float)) and dim > 0 for dim in figsize)
     ):
         raise ValueError(f"figsize must be a tuple of two positive floats, got {figsize}.")
+
+
+# Below this value a solver tolerance is at the level of the double precision epsilon that the
+# integrator accumulates anyway over the internal steps of a long sequence. Asking for it costs
+# a large factor in runtime without making the result more accurate.
+_MIN_USEFUL_TOL = 1e-14
+
+
+def _warn_extreme_tolerances(options: dict) -> None:
+    """
+    Warn when the solver tolerances are set below what double precision can deliver.
+
+    A dynamical decoupling sequence integrates thousands of internal steps per pulse, so the
+    accumulated round-off is orders of magnitude above 1e-16. Requesting such a tolerance makes
+    the integrator take many more steps for a result that does not change, which turns long
+    sequences into runs of several hours.
+
+    Parameters
+    ----------
+    options : dict
+        Dictionary of solver options to be passed to QuTip.
+    """
+    extreme = {
+        key: options[key]
+        for key in ("atol", "rtol")
+        if isinstance(options.get(key), (int, float)) and options[key] < _MIN_USEFUL_TOL
+    }
+
+    if extreme:
+        warnings.warn(
+            f"{extreme} is below the double precision floor of {_MIN_USEFUL_TOL:.0e} that the "
+            "integrator can hold over a long sequence. The extra steps multiply the runtime "
+            "without changing the result.",
+            stacklevel=3,
+        )
 
 
 def _usable_cpus() -> int:
