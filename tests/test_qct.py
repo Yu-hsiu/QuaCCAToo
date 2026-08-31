@@ -143,6 +143,44 @@ class TestNV:
         assert sys.H0.dims == [[3, 2], [3, 2]]
         assert all(R.shape == sys.H0.shape for R in sys.MW_Rx + sys.MW_Ry + sys.RF_Rx + sys.RF_Ry)
 
+    # below the GSLAC the transition frequencies must keep their previous values
+    @pytest.mark.parametrize(
+        ("N", "B0", "theta", "MW_freqs", "RF_freqs"),
+        [
+            (14, 25, 0, [2169.3821, 3570.6287], [4.931, 5.0836, 7.0764, 2.9469, 2.7931, 7.229]),
+            (15, 40, 0, [1749.0066, 3991.0016], [0.1748, 2.8535, 3.201]),
+            (
+                14,
+                4.2,
+                -45,
+                [2790.4219, 2956.8292],
+                [5.0047, 5.0232, 7.1447, 2.8836, 2.865, 7.1629],
+            ),
+        ],
+    )
+    def test_transition_freqs(self, N, B0, theta, MW_freqs, RF_freqs):
+        sys = NV(B0=B0, units_B0="mT", N=N, theta=theta, units_angles="deg")
+        assert np.allclose(sys.MW_freqs, MW_freqs, atol=1e-3)
+        assert np.allclose(sys.RF_freqs, RF_freqs, atol=1e-3)
+
+    # above the GSLAC the mS = -1 manifold drops below mS = 0, so MW_freqs must still hold the
+    # |mS=0> <-> |mS=-1> and |mS=0> <-> |mS=+1> transitions and not the forbidden mS = -1 <-> +1 one
+    @pytest.mark.parametrize("N", [0, 14, 15])
+    def test_MW_freqs_above_GSLAC(self, N):
+        sys = NV(B0=200, units_B0="mT", N=N)
+        assert np.allclose(sys.MW_freqs, [2734.99, 8474.99], atol=0.02)
+
+    # every RF frequency must be an actual gap of H0 on both sides of the GSLAC
+    @pytest.mark.parametrize("B0", [25, 200])
+    def test_RF_freqs_are_H0_gaps(self, B0):
+        sys = NV(B0=B0, units_B0="mT", N=14)
+        gaps = np.abs(sys.energy_levels[:, None] - sys.energy_levels[None, :])
+        assert all(np.isclose(gaps, f, atol=1e-9).any() for f in sys.RF_freqs)
+
+    # a temperature is meaningless without a nuclear spin, but it must not break the system
+    def test_no_nuclear_spin_with_temp(self):
+        assert NV(B0=25, units_B0="mT", N=0, temp=300, units_temp="K").rho0 == basis(3, 1)
+
 
 # Rabi object (fixture) used in the TestRabi class below
 @pytest.fixture

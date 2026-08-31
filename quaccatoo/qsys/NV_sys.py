@@ -191,6 +191,11 @@ class NV(QSys):
         rho0 : Qobj
             Initial state of the system
         """
+        if self.N == 0 or self.N is None:
+            # without a nuclear spin there is no thermal mixture to calculate
+            self.rho0 = basis(3, 1)
+            return
+
         # a loop to find the |0,1/2> and |0,-1/2> states
         max_1 = 0
         max_2 = 0
@@ -263,10 +268,37 @@ class NV(QSys):
                 )
                 / Z,
             )
-        elif self.N == 0 or self.N is None:
-            self.rho0 = basis(3, 1)
         else:
             raise ValueError(f"Invalid value for Nitrogen. Expected either 14 or 15, got {self.N}.")
+
+    def _mS_manifolds(self) -> dict[int, dict[float | None, float]]:
+        """
+        Groups the energy levels into the mS manifolds they belong to, as
+        {mS: {mI: energy}}.
+
+        Each eigenstate is labeled by the bare |mS, mI> state carrying the largest weight. The
+        index of a level inside energy_levels is not a reliable label on its own: the mS = -1
+        manifold drops below mS = 0 above the GSLAC, and the crossing field itself moves with the
+        temperature dependent D and with a misaligned B0.
+
+        Returns
+        -------
+        manifolds : dict
+            Energies of every level, keyed by the mS and mI of the dominant bare state.
+        """
+        dim_I = {14: 3, 15: 2, 0: 1, None: 1}[self.N]
+        mS_values = [1, 0, -1]
+        mI_values = {3: [1, 0, -1], 2: [0.5, -0.5], 1: [None]}[dim_I]
+
+        manifolds: dict[int, dict[float | None, float]] = {}
+        for idx, eig in enumerate(self.eigenstates):
+            weights = np.abs(eig.full().ravel()) ** 2
+            bare = int(np.argmax(weights))
+            mS = mS_values[bare // dim_I]
+            mI = mI_values[bare % dim_I]
+            manifolds.setdefault(mS, {})[mI] = self.energy_levels[idx]
+
+        return manifolds
 
     def _set_MW(self) -> None:
         """
@@ -285,30 +317,26 @@ class NV(QSys):
             self.MW_Rx = [tensor(Rx_0, qeye(2)), tensor(Rx_1, qeye(2))]
             self.MW_Ry = [tensor(Ry_0, qeye(2)), tensor(Ry_1, qeye(2))]
 
-            f1 = (np.sum(self.energy_levels[2:4]) - np.sum(self.energy_levels[1:2])) / 2
-            f2 = (np.sum(self.energy_levels[4:6]) - np.sum(self.energy_levels[1:2])) / 2
-            self.MW_freqs = np.array([f1, f2])
-
         elif self.N == 14:
             self.MW_h1 = tensor(jmat(1, "x"), qeye(3)) * 2**0.5
             self.MW_Rx = [tensor(Rx_0, qeye(3)), tensor(Rx_1, qeye(3))]
             self.MW_Ry = [tensor(Ry_0, qeye(3)), tensor(Ry_1, qeye(3))]
-
-            f1 = (np.sum(self.energy_levels[3:6]) - np.sum(self.energy_levels[1:3])) / 3
-            f2 = (np.sum(self.energy_levels[6:9]) - np.sum(self.energy_levels[1:3])) / 3
-            self.MW_freqs = np.array([f1, f2])
 
         elif self.N == 0 or self.N is None:
             self.MW_h1 = tensor(jmat(1, "x")) * 2**0.5
             self.MW_Rx = [Rx_0, Rx_1]
             self.MW_Ry = [Ry_0, Ry_1]
 
-            f1 = self.energy_levels[1]
-            f2 = self.energy_levels[2]
-            self.MW_freqs = np.array([f1, f2])
-
         else:
             raise ValueError(f"Invalid value for Nitrogen. Expected either 14 or 15, got {self.N}.")
+
+        # the mS = -1 manifold sits below mS = 0 above the GSLAC, so the transitions are taken
+        # between the manifold means instead of between fixed level indexes
+        manifolds = self._mS_manifolds()
+        mean_0 = np.mean(list(manifolds[0].values()))
+        f1 = abs(np.mean(list(manifolds[-1].values())) - mean_0)
+        f2 = abs(np.mean(list(manifolds[1].values())) - mean_0)
+        self.MW_freqs = np.array([f1, f2])
 
     def _set_RF(self) -> None:
         """
@@ -338,25 +366,18 @@ class NV(QSys):
             self.RF_Rx = [tensor(qeye(3), Rx_0), tensor(qeye(3), Rx_1)]
             self.RF_Ry = [tensor(qeye(3), Ry_0), tensor(qeye(3), Ry_1)]
 
-            # for the 14N isotope, the RF frequencies are more complicated as they need to respect
-            # the selection rule of Delta mI = +-1
-            # the order of the ms states changes above the GSLAC
-            if self.B0 <= 102.5:
-                f1 = self.energy_levels[2] - self.energy_levels[1]  # 0 -> -1 at ms=0
-                f2 = self.energy_levels[2]  # 0 -> +1 at ms=0
-                f3 = self.energy_levels[5] - self.energy_levels[3]  # 0 -> -1 at ms=-1
-                f4 = self.energy_levels[5] - self.energy_levels[4]  # 0 -> +1 at ms=-1
-                f5 = self.energy_levels[8] - self.energy_levels[7]  # 0 -> -1 at ms=+1
-                f6 = self.energy_levels[8] - self.energy_levels[6]  # 0 -> +1 at ms=-1
-            else:
-                f1 = self.energy_levels[2]  # 0 -> -1 at ms=-1
-                f2 = self.energy_levels[2] - self.energy_levels[1]  # 0 -> +1 at ms=-1
-                f3 = self.energy_levels[5] - self.energy_levels[4]  # 0 -> -1 at ms=0
-                f4 = self.energy_levels[5] - self.energy_levels[3]  # 0 -> +1 at ms=0
-                f5 = self.energy_levels[8] - self.energy_levels[7]  # 0 -> -1 at ms=+1
-                f6 = self.energy_levels[8] - self.energy_levels[6]  # 0 -> +1 at ms=-1
+            # for the 14N isotope, the RF frequencies are more complicated as they need to
+            # respect the selection rule of Delta mI = +-1.
+            # The manifolds are taken in order of increasing energy, which swaps mS = 0 and
+            # mS = -1 above the GSLAC, and within each manifold the two allowed transitions
+            # mI = 0 <-> -1 and mI = 0 <-> +1 are given in this order.
+            manifolds = self._mS_manifolds()
+            freqs = []
+            for mS in sorted(manifolds, key=lambda mS: np.mean(list(manifolds[mS].values()))):
+                levels = manifolds[mS]
+                freqs += [abs(levels[0] - levels[-1]), abs(levels[0] - levels[1])]
 
-            self.RF_freqs = np.array([f1, f2, f3, f4, f5, f6])
+            self.RF_freqs = np.array(freqs)
 
         elif self.N == 0 or self.N is None:
             self.RF_h1 = qeye(3)
