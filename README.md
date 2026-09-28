@@ -61,6 +61,30 @@ QuaCCAToo is best optimized to run on GNU/Linux systems. More specifically, the 
 QuTip, which QuaCCAToo heavily relies on, does not work properly on Windows. This leads to severe slow downs
 in simulations and even crashes in some hardware. macOS machines have not been tested by us.
 
+Sequences therefore run serially unless `map_kw={"num_cpus": n}` is passed. The predefined sequences
+(`Rabi`, `Hahn`, `CPMG`, `XY8`, ...) give identical results in parallel on Windows too, since each
+worker receives the whole object; only a custom sequence function that reads module-level objects can
+see different values in the workers.
+
+## Reproducing the paper listings
+
+`verify_paper_listings.py` runs every code listing of Sec. III of
+[arXiv:2507.18759v2](https://arxiv.org/abs/2507.18759) on thinned grids and checks it against the
+numbers in the paper and the data stored in `docs/tutorials/sim_data_tutorials` (20-40 minutes on a
+desktop, most of it the XY8 section; sections A and C take under a minute):
+
+```
+python verify_paper_listings.py        # or: python verify_paper_listings.py A C
+```
+
+Three points where the printed listings differ from what the text and the data say:
+
+- Sec. III B, `def B2(t, gamma_B2=5.5, w2=0.3)`: the defaults are swapped, the text gives
+  γe B2 = 0.3 MHz and ω2 = 5.5 MHz. As printed there is no resonance at τ0 = 0.09 µs.
+- Sec. III B, CPMG: `atol = rtol = 1e-16` is below double precision and only slows the run down;
+  the stored data used `pi_pulse_duration = 0.00999483` instead of the printed `0.01`.
+- Sec. III C, Table I: the fidelities are QuTiP's `fidelity`, i.e. sqrt(⟨ψ|ρ|ψ⟩), not ⟨ψ|ρ|ψ⟩.
+
 
 ## Featured In
 

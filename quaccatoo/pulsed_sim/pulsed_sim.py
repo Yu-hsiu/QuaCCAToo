@@ -567,14 +567,18 @@ class PulsedSim:
                 map_kw = {**map_kw, "num_cpus": num_cpus}
 
         if num_cpus is not None and num_cpus > 1:
-            if multiprocessing.get_start_method(allow_none=False) != "fork":
+            # A predefined sequence is a bound method of this object, so it is pickled together
+            # with the system and reaches the workers intact under any start method. Only a
+            # user function reading module globals can see different values in the workers.
+            is_own_method = getattr(self.sequence, "__self__", None) is self
+            if not is_own_method and multiprocessing.get_start_method(allow_none=False) != "fork":
                 warnings.warn(
                     "Parallel execution was requested on a platform that starts processes with "
                     f"'{multiprocessing.get_start_method(allow_none=False)}' instead of 'fork'. "
-                    "The worker processes re-import the module defining the sequence, so every "
-                    "attribute of the quantum system set after the import (rho0, observable, H2, "
-                    "c_ops) is not visible to them and the results will not correspond to the "
-                    "intended system. Define the complete system at module level, or drop "
+                    "The worker processes re-import the module defining the sequence function, so "
+                    "any module-level object it reads (for example a quantum system whose rho0, "
+                    "observable, H2 or c_ops were set after the import) has its import-time value "
+                    "there. Pass everything the function needs through sequence_kwargs, or drop "
                     "num_cpus from map_kw to run serially.",
                     stacklevel=2,
                 )

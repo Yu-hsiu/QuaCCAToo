@@ -11,6 +11,8 @@ Remember to mark long running tests with the `@pytest.mark.slow` decorator. Thes
 with the `--runslow` CLI flag passed to `pytest`.
 """
 
+import warnings
+
 import matplotlib
 import numpy as np
 import pytest
@@ -283,6 +285,23 @@ class TestHahn:
             [3.9774, 1.0002],
             atol=1e-3,
         )
+
+    @pytest.mark.filterwarnings("ignore::DeprecationWarning")
+    def test_parallel_matches_serial(self, qsys):
+        # a predefined sequence travels with its system, so workers started with spawn agree too
+        qsys.c_ops = 0.1 * jmat(1 / 2, "z") * 2
+        hahn_sim = Hahn(
+            free_duration=np.linspace(2.5, 25, 4),
+            system=qsys,
+            pi_pulse_duration=0,
+            Rx=jmat(1 / 2, "x") * 2,
+        )
+        hahn_sim.run()
+        serial = np.array(hahn_sim.results)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("error", message="Parallel execution was requested")
+            hahn_sim.run(map_kw={"num_cpus": 2})
+        assert np.allclose(hahn_sim.results, serial)
 
 
 class TestXY:
